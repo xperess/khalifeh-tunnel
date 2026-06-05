@@ -12,10 +12,12 @@ import struct
 import threading
 import subprocess
 import re
+import json
 from queue import Queue, Empty
 from typing import Optional
 
 # ========== تنظیمات ==========
+CONFIG_FILE = "/opt/khalifeh/config.json"
 DIAL_TIMEOUT = 5
 KEEPALIVE_SECS = 20
 SOCKBUF = 8 * 1024 * 1024
@@ -23,32 +25,48 @@ BUF_COPY = 256 * 1024
 POOL_WAIT = 5
 SYNC_INTERVAL = 3
 
-# پورت‌هایی که نباید تانل شوند (می‌توانی اضافه کنی)
-EXCLUDE_PORTS = {22, 53, 80, 443, 2096, 9876, 11111}
+# پورت‌های پیش‌فرض ممنوع
+DEFAULT_EXCLUDE_PORTS = {22, 53, 80, 443, 2096, 9876, 11111}
+EXCLUDE_PORTS = set(DEFAULT_EXCLUDE_PORTS)
 
 # ========== توابع کمکی ==========
 
+def load_config():
+    """بارگذاری تنظیمات از فایل"""
+    global EXCLUDE_PORTS
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, 'r') as f:
+                config = json.load(f)
+                if 'exclude_ports' in config:
+                    EXCLUDE_PORTS = set(config['exclude_ports'])
+        except:
+            pass
+
+def save_config():
+    """ذخیره تنظیمات در فایل"""
+    config = {'exclude_ports': list(EXCLUDE_PORTS)}
+    with open(CONFIG_FILE, 'w') as f:
+        json.dump(config, f, indent=2)
+
 def log(msg: str, level: str = "INFO"):
-    """لاگ ساده با زمان و رنگ"""
+    """لاگ ساده با زمان"""
     t = time.strftime("%Y-%m-%d %H:%M:%S")
     
-    colors = {
-        "INFO": "\033[92m",
-        "ERROR": "\033[91m",
-        "WARN": "\033[93m",
-        "OK": "\033[96m",
+    symbols = {
+        "INFO": "ℹ",
+        "ERROR": "✖",
+        "WARN": "⚠",
+        "OK": "✓",
     }
-    reset = "\033[0m"
-    color = colors.get(level, reset)
+    sym = symbols.get(level, "•")
     
     if level == "ERROR":
-        print(f"[{t}] {color}[ERROR]{reset} {msg}", flush=True)
+        print(f"[{t}] [{sym}] {msg}", flush=True)
     elif level == "OK":
-        print(f"[{t}] {color}[✓]{reset} {msg}", flush=True)
-    elif level == "WARN":
-        print(f"[{t}] {color}[!]{reset} {msg}", flush=True)
+        print(f"[{t}] [{sym}] {msg}", flush=True)
     else:
-        print(f"[{t}] {color}[i]{reset} {msg}", flush=True)
+        print(f"[{t}] [{sym}] {msg}", flush=True)
 
 def tune_tcp(sock: socket.socket):
     """بهینه‌سازی سوکت TCP"""
@@ -118,8 +136,8 @@ def bridge(a: socket.socket, b: socket.socket):
 # ========== حالت خارج (EU / Client) ==========
 
 def get_listen_ports(exclude_bridge: int, exclude_sync: int) -> list:
-    """دریافت لیست پورت‌های در حال شنیدن روی سیستم (به جز پورت‌های امنیتی)"""
-    exclude_ports = EXCLUDE_PORTS.union({exclude_bridge, exclude_sync})
+    """دریافت لیست پورت‌های در حال شنیدن روی سیستم"""
+    exclude = EXCLUDE_PORTS.union({exclude_bridge, exclude_sync})
     
     try:
         out = subprocess.check_output(
@@ -136,7 +154,7 @@ def get_listen_ports(exclude_bridge: int, exclude_sync: int) -> list:
             match = re.search(r':(\d+)$', part)
             if match:
                 p = int(match.group(1))
-                if p not in exclude_ports and 1 <= p <= 65535:
+                if p not in exclude and 1 <= p <= 65535:
                     ports.add(p)
     return sorted(ports)
 
@@ -153,6 +171,7 @@ def eu_mode(iran_ip: str, bridge_port: int, sync_port: int, pool_size: int):
                 
                 while True:
                     ports = get_listen_ports(bridge_port, sync_port)[:255]
+                    log(f"ارسال {len(ports)} پورت به سرور ایران", "INFO")
                     payload = bytes([len(ports)])
                     for p in ports:
                         payload += struct.pack("!H", p)
@@ -183,14 +202,13 @@ def eu_mode(iran_ip: str, bridge_port: int, sync_port: int, pool_size: int):
                 
                 target_port = struct.unpack("!H", hdr)[0]
                 local = dial_tcp("127.0.0.1", target_port)
-                log(f"پل زدن به پورت محلی: {target_port}")
+                log(f"پل زدن به پورت محلی: {target_port}", "OK")
                 bridge(conn, local)
                 delay = 0.2
             except Exception as e:
                 time.sleep(delay)
                 delay = min(delay * 2, 5.0)
     
-    # استارت تردها
     threading.Thread(target=sync_loop, daemon=True).start()
     for _ in range(pool_size):
         threading.Thread(target=worker, daemon=True).start()
@@ -220,6 +238,7 @@ def ir_mode(bridge_port: int, sync_port: int, pool_size: int, auto_sync: bool, m
         while True:
             try:
                 conn, addr = srv.accept()
+                log(f"اتصال جدید از خارج: {addr[0]}:{addr[1]}")
                 tune_tcp(conn)
                 pool.put(conn, block=False)
             except Exception as e:
@@ -237,25 +256,13 @@ def ir_mode(bridge_port: int, sync_port: int, pool_size: int, auto_sync: bool, m
                 cand = pool.get(timeout=max(0.1, deadline - time.time()))
                 if cand.fileno() == -1:
                     continue
-                cand.setblocking(False)
-                try:
-                    cand.recv(1, socket.MSG_PEEK)
-                except BlockingIOError:
-                    pass
-                except Exception:
-                    cand.close()
-                    continue
-                finally:
-                    try:
-                        cand.setblocking(True)
-                    except OSError:
-                        continue
                 eu_conn = cand
                 break
             except Empty:
                 continue
         
         if eu_conn is None:
+            log(f"هیچ اتصالی به خارج برای پورت {target_port} موجود نیست", "WARN")
             user_sock.close()
             return
         
@@ -264,7 +271,8 @@ def ir_mode(bridge_port: int, sync_port: int, pool_size: int, auto_sync: bool, m
             eu_conn.sendall(struct.pack("!H", target_port))
             eu_conn.settimeout(None)
             bridge(user_sock, eu_conn)
-        except Exception:
+        except Exception as e:
+            log(f"خطا در پل زدن پورت {target_port}: {e}", "ERROR")
             try:
                 user_sock.close()
                 eu_conn.close()
@@ -273,7 +281,6 @@ def ir_mode(bridge_port: int, sync_port: int, pool_size: int, auto_sync: bool, m
     
     def open_port(port: int):
         """باز کردن یک پورت و شنیدن روی آن"""
-        # اگر پورت در لیست ممنوعه است، باز نکن
         if port in EXCLUDE_PORTS:
             return
             
@@ -300,6 +307,7 @@ def ir_mode(bridge_port: int, sync_port: int, pool_size: int, auto_sync: bool, m
             while active_ports.get(port, False):
                 try:
                     user, addr = srv.accept()
+                    log(f"اتصال جدید به پورت {port} از {addr[0]}:{addr[1]}")
                     threading.Thread(target=handle_user, args=(user, port), daemon=True).start()
                 except Exception as e:
                     if active_ports.get(port, False):
@@ -318,7 +326,8 @@ def ir_mode(bridge_port: int, sync_port: int, pool_size: int, auto_sync: bool, m
         
         while True:
             try:
-                conn, _ = srv.accept()
+                conn, addr = srv.accept()
+                log(f"کلاینت همگام‌سازی متصل شد: {addr[0]}:{addr[1]}")
                 
                 def handle_sync(c):
                     try:
@@ -327,14 +336,15 @@ def ir_mode(bridge_port: int, sync_port: int, pool_size: int, auto_sync: bool, m
                             if not h:
                                 break
                             count = h[0]
+                            log(f"دریافت {count} پورت از کلاینت خارج", "INFO")
                             for _ in range(count):
                                 pd = recv_exact(c, 2)
                                 if not pd:
                                     return
                                 p = struct.unpack("!H", pd)[0]
                                 open_port(p)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        log(f"خطا در همگام‌سازی: {e}", "ERROR")
                     finally:
                         try:
                             c.close()
@@ -343,10 +353,9 @@ def ir_mode(bridge_port: int, sync_port: int, pool_size: int, auto_sync: bool, m
                 
                 threading.Thread(target=handle_sync, args=(conn,), daemon=True).start()
             except Exception as e:
-                log(f"خطا در همگام‌سازی: {e}", "ERROR")
+                log(f"خطا در پذیرش همگام‌سازی: {e}", "ERROR")
                 time.sleep(0.2)
     
-    # استارت تردها
     threading.Thread(target=bridge_listener, daemon=True).start()
     
     if auto_sync:
@@ -360,10 +369,8 @@ def ir_mode(bridge_port: int, sync_port: int, pool_size: int, auto_sync: bool, m
     while True:
         time.sleep(3600)
 
-# ========== محاسبه اندازه پول ==========
-
 def auto_pool_size(role: str = "ir") -> int:
-    """محاسبه خودکار اندازه پول بر اساس منابع سیستم"""
+    """محاسبه خودکار اندازه پول"""
     try:
         import resource
         soft, _ = resource.getrlimit(resource.RLIMIT_NOFILE)
@@ -371,51 +378,71 @@ def auto_pool_size(role: str = "ir") -> int:
     except Exception:
         nofile = 1024
     
-    mem_mb = 0
-    try:
-        with open("/proc/meminfo", "r") as f:
-            for line in f:
-                if line.startswith("MemTotal:"):
-                    mem_kb = int(line.split()[1])
-                    mem_mb = mem_kb // 1024
-                    break
-    except Exception:
-        mem_mb = 0
-    
     reserve = 300
     fd_budget = max(0, nofile - reserve)
     frac = 0.22 if role == "ir" else 0.30
     fd_based = int(fd_budget * frac)
-    ram_based = int((mem_mb / 1024) * 200) if mem_mb else 300
     
-    pool = min(fd_based, ram_based)
-    pool = max(30, min(pool, 500))
+    pool = max(30, min(fd_based, 500))
     return pool
 
-# ========== منوی اصلی ==========
+def manage_exclude_ports():
+    """مدیریت پورت‌های ممنوع"""
+    global EXCLUDE_PORTS
+    load_config()
+    
+    while True:
+        print("\n" + "="*50)
+        print("    مدیریت پورت‌های حذف شده از تانل")
+        print("="*50)
+        print(f"\nپورت‌های فعلی: {sorted(EXCLUDE_PORTS)}")
+        print("\n1) اضافه کردن پورت")
+        print("2) حذف پورت از لیست")
+        print("3) بازگشت")
+        
+        choice = input("\nانتخاب کنید: ").strip()
+        
+        if choice == "1":
+            port = input("پورت را وارد کنید: ").strip()
+            if port.isdigit():
+                EXCLUDE_PORTS.add(int(port))
+                save_config()
+                print(f"✅ پورت {port} به لیست ممنوعه اضافه شد")
+            else:
+                print("❌ پورت نامعتبر")
+        
+        elif choice == "2":
+            port = input("پورت را وارد کنید: ").strip()
+            if port.isdigit() and int(port) in EXCLUDE_PORTS:
+                EXCLUDE_PORTS.remove(int(port))
+                save_config()
+                print(f"✅ پورت {port} از لیست ممنوعه حذف شد")
+            else:
+                print("❌ پورت در لیست نیست")
+        
+        elif choice == "3":
+            break
+        
+        input("\nEnter to continue...")
 
 def print_banner():
-    """نمایش بنر زیبا"""
-    print("\n" + "="*55)
-    print("  ██╗  ██╗ █████╗ ██╗     ██╗███████╗███████╗")
-    print("  ██║  ██║██╔══██╗██║     ██║██╔════╝██╔════╝")
-    print("  ███████║███████║██║     ██║█████╗  █████╗  ")
-    print("  ██╔══██║██╔══██║██║     ██║██╔══╝  ██╔══╝  ")
-    print("  ██║  ██║██║  ██║███████╗██║██║     ███████╗")
-    print("  ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚═╝╚═╝     ╚══════╝")
-    print("="*55)
-    print("     خلیفه تانل - Khalifeh Tunnel v2.0")
-    print("     ابزار عبور از محدودیت‌های شبکه")
-    print("="*55 + "\n")
+    """نمایش بنر ساده"""
+    print("\n" + "="*50)
+    print("   خلیفه تانل - Khalifeh Tunnel v2.0")
+    print("   ابزار عبور از محدودیت‌های شبکه")
+    print("="*50 + "\n")
 
 def main():
+    load_config()
+    
     print_banner()
     
     print("1) حالت سرور (ایران) - Server Mode")
     print("2) حالت کلاینت (خارج) - Client Mode")
-    print("-"*55)
+    print("3) مدیریت پورت‌های حذف شده")
+    print("-"*50)
     
-    choice = input("انتخاب کنید (1/2): ").strip()
+    choice = input("انتخاب کنید (1/2/3): ").strip()
     
     if choice == "1":
         print("\n--- تنظیمات سرور (ایران) ---")
@@ -423,7 +450,6 @@ def main():
         sync = int(input("پورت همگام‌سازی [7001]: ") or "7001")
         auto = input("همگام‌سازی خودکار؟ (y/n) [y]: ").strip().lower()
         
-        # نمایش پورت‌های ممنوعه
         print(f"\nپورت‌های حذف شده از تانل: {sorted(EXCLUDE_PORTS)}")
         
         if auto == "n":
@@ -442,6 +468,10 @@ def main():
         sync = int(input("پورت همگام‌سازی [7001]: ") or "7001")
         pool = auto_pool_size("eu")
         eu_mode(iran_ip, bridge, sync, pool)
+    
+    elif choice == "3":
+        manage_exclude_ports()
+        main()
     
     else:
         print("انتخاب نامعتبر!")
