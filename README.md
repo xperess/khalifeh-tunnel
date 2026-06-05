@@ -8,7 +8,7 @@
 sudo bash <(curl -s https://raw.githubusercontent.com/xperess/khalifeh-tunnel/main/install.sh)
 
 
-استفاده
+
 بعد از نصب:
 
 bash
@@ -23,3 +23,4 @@ Python 3
 
 Ubuntu/Debian
 
+دسترسی روت

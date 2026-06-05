@@ -51,7 +51,6 @@ install_tunnel() {
     
     # کپی فایل اصلی
     if [[ -f "$0" ]] && [[ "$0" != "bash" ]]; then
-        # اگر از فایل اجرا می‌شه، دایرکتوری اسکریپت رو پیدا کن
         SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
         cp "$SCRIPT_DIR/khalifeh.py" /opt/khalifeh/ 2>/dev/null || {
             echo -e "${RED}فایل khalifeh.py یافت نشد!${NC}"
@@ -63,15 +62,16 @@ install_tunnel() {
     fi
     
     chmod +x /opt/khalifeh/khalifeh.py
+    sed -i 's/\r$//' /opt/khalifeh/khalifeh.py
     
     # نصب وابستگی‌ها
     echo -e "${GREEN}[*] نصب وابستگی‌ها...${NC}"
-    apt-get update -y >/dev/null 2>&1
+    apt-get update -y >/dev/null 2>&1 || true
     apt-get install -y python3 screen iproute2 >/dev/null 2>&1
     
     echo -e "${GREEN}[✓] نصب کامل شد!${NC}"
     echo ""
-    echo "اجرا با: sudo khalifeh-tunnel"
+    echo "اجرا با: sudo khalifeh-manager"
     
     # نصب به PATH
     ln -sf /opt/khalifeh/khalifeh.py /usr/local/bin/khalifeh-tunnel 2>/dev/null || true
@@ -149,6 +149,7 @@ if [[ ! -f "/opt/khalifeh/khalifeh.py" ]] && [[ -f "$(dirname "${BASH_SOURCE[0]}
     mkdir -p /opt/khalifeh
     cp "$(dirname "${BASH_SOURCE[0]}")/khalifeh.py" /opt/khalifeh/
     chmod +x /opt/khalifeh/khalifeh.py
+    sed -i 's/\r$//' /opt/khalifeh/khalifeh.py
     ln -sf /opt/khalifeh/khalifeh.py /usr/local/bin/khalifeh-tunnel 2>/dev/null || true
 fi
 

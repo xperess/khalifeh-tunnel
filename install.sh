@@ -28,8 +28,12 @@ cp /tmp/manager.sh /usr/local/bin/khalifeh-manager
 chmod +x /opt/khalifeh/khalifeh.py
 chmod +x /usr/local/bin/khalifeh-manager
 
+# اصلاح فرمت فایل‌ها (حذف \r)
+sed -i 's/\r$//' /opt/khalifeh/khalifeh.py
+sed -i 's/\r$//' /usr/local/bin/khalifeh-manager
+
 # وابستگی‌ها
-apt-get update -y
+apt-get update -y 2>/dev/null || true
 apt-get install -y python3 screen iproute2
 
 # لینک سریع

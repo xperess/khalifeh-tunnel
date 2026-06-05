@@ -106,10 +106,9 @@ def get_listen_ports(exclude_bridge: int, exclude_sync: int) -> list:
         ).decode()
     except Exception:
         return []
-    
+
     ports = set()
     for line in out.splitlines():
-        # استخراج پورت از خطوط ss
         parts = line.split()
         for part in parts:
             match = re.search(r':(\d+)$', part)
@@ -122,25 +121,25 @@ def get_listen_ports(exclude_bridge: int, exclude_sync: int) -> list:
 def eu_mode(iran_ip: str, bridge_port: int, sync_port: int, pool_size: int):
     """حالت کلاینت (خارج) - اتصال به سرور ایران"""
     log(f"خلیفه تانل - حالت خارج | ایران: {iran_ip}:{bridge_port} | Pool: {pool_size}")
-    
+
     def sync_loop():
         """همگام‌سازی پورت‌ها با سرور"""
         while True:
             try:
                 conn = dial_tcp(iran_ip, sync_port)
                 log(f"متصل به سرور همگام‌سازی: {sync_port}")
-                
+
                 while True:
                     ports = get_listen_ports(bridge_port, sync_port)[:255]
                     payload = bytes([len(ports)])
                     for p in ports:
                         payload += struct.pack("!H", p)
-                    
+
                     conn.settimeout(2)
                     conn.sendall(payload)
                     conn.settimeout(None)
                     time.sleep(SYNC_INTERVAL)
-                    
+
             except Exception as e:
                 log(f"خطا در همگام‌سازی: {e}", "ERROR")
                 try:
@@ -148,7 +147,7 @@ def eu_mode(iran_ip: str, bridge_port: int, sync_port: int, pool_size: int):
                 except Exception:
                     pass
                 time.sleep(SYNC_INTERVAL)
-    
+
     def worker():
         """کارگرهای پل معکوس"""
         delay = 0.2
@@ -159,7 +158,7 @@ def eu_mode(iran_ip: str, bridge_port: int, sync_port: int, pool_size: int):
                 if not hdr:
                     conn.close()
                     continue
-                
+
                 target_port = struct.unpack("!H", hdr)[0]
                 local = dial_tcp("127.0.0.1", target_port)
                 log(f"پل زدن به پورت محلی: {target_port}")
@@ -168,12 +167,11 @@ def eu_mode(iran_ip: str, bridge_port: int, sync_port: int, pool_size: int):
             except Exception as e:
                 time.sleep(delay)
                 delay = min(delay * 2, 5.0)
-    
-    # استارت تردها
+
     threading.Thread(target=sync_loop, daemon=True).start()
     for _ in range(pool_size):
         threading.Thread(target=worker, daemon=True).start()
-    
+
     log("سیستم خارج فعال شد. در حال انتظار...")
     while True:
         time.sleep(3600)
@@ -183,11 +181,11 @@ def eu_mode(iran_ip: str, bridge_port: int, sync_port: int, pool_size: int):
 def ir_mode(bridge_port: int, sync_port: int, pool_size: int, auto_sync: bool, manual_ports: list):
     """حالت سرور (ایران)"""
     log(f"خلیفه تانل - حالت ایران | Bridge: {bridge_port} | Sync: {sync_port} | Pool: {pool_size}")
-    
+
     pool = Queue(maxsize=pool_size * 2)
     active_ports = {}
     active_lock = threading.Lock()
-    
+
     def bridge_listener():
         """پذیرش اتصالات از کلاینت خارج"""
         srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -195,7 +193,7 @@ def ir_mode(bridge_port: int, sync_port: int, pool_size: int, auto_sync: bool, m
         srv.bind(("0.0.0.0", bridge_port))
         srv.listen(16384)
         log(f"پل بریج فعال شد: {bridge_port}")
-        
+
         while True:
             try:
                 conn, addr = srv.accept()
@@ -204,17 +202,16 @@ def ir_mode(bridge_port: int, sync_port: int, pool_size: int, auto_sync: bool, m
             except Exception as e:
                 log(f"خطا در پل بریج: {e}", "ERROR")
                 time.sleep(0.2)
-    
+
     def handle_user(user_sock: socket.socket, target_port: int):
         """مدیریت اتصال کاربر به پورت هدف"""
         tune_tcp(user_sock)
         deadline = time.time() + POOL_WAIT
         eu_conn = None
-        
+
         while time.time() < deadline:
             try:
                 cand = pool.get(timeout=max(0.1, deadline - time.time()))
-                # بررسی سالم بودن سوکت
                 cand.setblocking(False)
                 try:
                     cand.recv(1, socket.MSG_PEEK)
@@ -229,11 +226,11 @@ def ir_mode(bridge_port: int, sync_port: int, pool_size: int, auto_sync: bool, m
                 break
             except Empty:
                 continue
-        
+
         if eu_conn is None:
             user_sock.close()
             return
-        
+
         try:
             eu_conn.settimeout(2)
             eu_conn.sendall(struct.pack("!H", target_port))
@@ -245,14 +242,14 @@ def ir_mode(bridge_port: int, sync_port: int, pool_size: int, auto_sync: bool, m
                 eu_conn.close()
             except Exception:
                 pass
-    
+
     def open_port(port: int):
         """باز کردن یک پورت و شنیدن روی آن"""
         with active_lock:
             if port in active_ports:
                 return
             active_ports[port] = True
-        
+
         try:
             srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -263,9 +260,9 @@ def ir_mode(bridge_port: int, sync_port: int, pool_size: int, auto_sync: bool, m
                 active_ports.pop(port, None)
             log(f"نمی‌توان پورت {port} را باز کرد: {e}", "ERROR")
             return
-        
+
         log(f"پورت {port} باز شد ✅")
-        
+
         def accept_users():
             while active_ports.get(port, False):
                 try:
@@ -275,9 +272,9 @@ def ir_mode(bridge_port: int, sync_port: int, pool_size: int, auto_sync: bool, m
                     if active_ports.get(port, False):
                         log(f"خطا در پورت {port}: {e}", "ERROR")
                     time.sleep(0.2)
-        
+
         threading.Thread(target=accept_users, daemon=True).start()
-    
+
     def sync_listener():
         """پذیرش اتصالات همگام‌سازی از کلاینت خارج"""
         srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -285,11 +282,11 @@ def ir_mode(bridge_port: int, sync_port: int, pool_size: int, auto_sync: bool, m
         srv.bind(("0.0.0.0", sync_port))
         srv.listen(1024)
         log(f"همگام‌سازی فعال شد: {sync_port}")
-        
+
         while True:
             try:
                 conn, _ = srv.accept()
-                
+
                 def handle_sync(c):
                     try:
                         while True:
@@ -310,22 +307,21 @@ def ir_mode(bridge_port: int, sync_port: int, pool_size: int, auto_sync: bool, m
                             c.close()
                         except Exception:
                             pass
-                
+
                 threading.Thread(target=handle_sync, args=(conn,), daemon=True).start()
             except Exception as e:
                 log(f"خطا در همگام‌سازی: {e}", "ERROR")
                 time.sleep(0.2)
-    
-    # استارت تردها
+
     threading.Thread(target=bridge_listener, daemon=True).start()
-    
+
     if auto_sync:
         threading.Thread(target=sync_listener, daemon=True).start()
     else:
         for p in manual_ports:
             open_port(p)
         log(f"پورت‌های دستی باز شدند: {manual_ports}")
-    
+
     log("سیستم ایران فعال شد. در حال انتظار...")
     while True:
         time.sleep(3600)
@@ -340,8 +336,7 @@ def auto_pool_size(role: str = "ir") -> int:
         nofile = soft if soft > 0 else 1024
     except Exception:
         nofile = 1024
-    
-    # برآورد RAM
+
     mem_mb = 0
     try:
         with open("/proc/meminfo", "r") as f:
@@ -352,13 +347,13 @@ def auto_pool_size(role: str = "ir") -> int:
                     break
     except Exception:
         mem_mb = 0
-    
+
     reserve = 300
     fd_budget = max(0, nofile - reserve)
     frac = 0.22 if role == "ir" else 0.30
     fd_based = int(fd_budget * frac)
     ram_based = int((mem_mb / 1024) * 200) if mem_mb else 300
-    
+
     pool = min(fd_based, ram_based)
     pool = max(50, min(pool, 1500))
     return pool
@@ -370,19 +365,19 @@ def main():
     print("    خلیفه تانل - Khalifeh Tunnel v1.0")
     print("    ابزار عبور از محدودیت‌های شبکه")
     print("="*50 + "\n")
-    
+
     print("1) حالت سرور (ایران) - Server Mode")
     print("2) حالت کلاینت (خارج) - Client Mode")
     print("-"*50)
-    
+
     choice = input("انتخاب کنید (1/2): ").strip()
-    
+
     if choice == "1":
         print("\n--- تنظیمات سرور (ایران) ---")
         bridge = int(input("پورت بریج [7000]: ") or "7000")
         sync = int(input("پورت همگام‌سازی [7001]: ") or "7001")
         auto = input("همگام‌سازی خودکار؟ (y/n) [y]: ").strip().lower()
-        
+
         if auto == "n":
             ports_str = input("پورت‌های دستی (مثال: 80,443,2083): ")
             manual = [int(p.strip()) for p in ports_str.split(",") if p.strip().isdigit()]
@@ -391,7 +386,7 @@ def main():
         else:
             pool = auto_pool_size("ir")
             ir_mode(bridge, sync, pool, True, [])
-    
+
     elif choice == "2":
         print("\n--- تنظیمات کلاینت (خارج) ---")
         iran_ip = input("آیپی سرور ایران: ").strip()
@@ -399,7 +394,7 @@ def main():
         sync = int(input("پورت همگام‌سازی [7001]: ") or "7001")
         pool = auto_pool_size("eu")
         eu_mode(iran_ip, bridge, sync, pool)
-    
+
     else:
         print("انتخاب نامعتبر!")
         sys.exit(1)
