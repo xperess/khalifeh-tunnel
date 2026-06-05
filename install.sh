@@ -16,7 +16,7 @@ fi
 # دریافت فایل‌ها
 echo "[*] دانلود فایل‌ها..."
 
-REPO_URL="https://raw.githubusercontent.com/YOUR_USERNAME/khalifeh-tunnel/main"
+REPO_URL="https://raw.githubusercontent.com/xperess/khalifeh-tunnel/main"
 
 curl -s -o /tmp/khalifeh.py "$REPO_URL/khalifeh.py"
 curl -s -o /tmp/manager.sh "$REPO_URL/manager.sh"
