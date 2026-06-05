@@ -1,65 +1,78 @@
 #!/bin/bash
-# نصب خودکار خلیفه تانل
+# Khalifeh Tunnel - Installer
 
 set -e
 
-echo "==================================="
-echo "   نصب خلیفه تانل - Khalifeh Tunnel"
-echo "==================================="
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+NC='\033[0m'
 
-# بررسی دسترسی روت
+echo ""
+echo "========================================="
+echo "   Khalifeh Tunnel - Installation"
+echo "========================================="
+echo ""
+
 if [[ "$EUID" -ne 0 ]]; then
-    echo "لطفاً با دسترسی روت اجرا کنید: sudo bash install.sh"
+    echo -e "${RED}Error: Please run as root (sudo bash install.sh)${NC}"
     exit 1
 fi
 
-# دریافت فایل‌ها
-echo "[*] دانلود فایل‌ها..."
+# Create directory
+mkdir -p /opt/khalifeh
+mkdir -p /opt/khalifeh/profiles
+mkdir -p /opt/khalifeh/logs
 
+# Download files
+echo "[*] Downloading files..."
 REPO_URL="https://raw.githubusercontent.com/xperess/khalifeh-tunnel/main"
 
-curl -s -o /tmp/khalifeh.py "$REPO_URL/khalifeh.py"
-curl -s -o /tmp/manager.sh "$REPO_URL/manager.sh"
+curl -s -o /opt/khalifeh/khalifeh.py "$REPO_URL/khalifeh.py"
+curl -s -o /opt/khalifeh/manager.sh "$REPO_URL/manager.sh"
 
-# نصب
-mkdir -p /opt/khalifeh
-cp /tmp/khalifeh.py /opt/khalifeh/
-cp /tmp/manager.sh /usr/local/bin/khalifeh-manager
 chmod +x /opt/khalifeh/khalifeh.py
-chmod +x /usr/local/bin/khalifeh-manager
+chmod +x /opt/khalifeh/manager.sh
 
-# اصلاح فرمت فایل‌ها (حذف \r)
+# Fix line endings
 sed -i 's/\r$//' /opt/khalifeh/khalifeh.py
-sed -i 's/\r$//' /usr/local/bin/khalifeh-manager
+sed -i 's/\r$//' /opt/khalifeh/manager.sh
 
-# افزایش محدودیت فایل‌ها
+# Create symlink
+ln -sf /opt/khalifeh/manager.sh /usr/local/bin/khalifeh
+
+# Install dependencies
+apt-get update -y >/dev/null 2>&1 || true
+apt-get install -y python3 screen iproute2 >/dev/null 2>&1
+
+# Increase file limits
 echo "root soft nofile 65535" >> /etc/security/limits.conf
 echo "root hard nofile 65535" >> /etc/security/limits.conf
 
-# وابستگی‌ها
-apt-get update -y 2>/dev/null || true
-apt-get install -y python3 screen iproute2
-
-# لینک سریع
-ln -sf /opt/khalifeh/khalifeh.py /usr/local/bin/khalifeh 2>/dev/null || true
-
-# اسکریپت ریستارت
-cat > /usr/local/bin/khalifeh-restart << 'EOF'
-#!/bin/bash
-pkill -f khalifeh.py 2>/dev/null
-sleep 1
-sudo khalifeh
+# Create default profile for Iran
+mkdir -p /opt/khalifeh/profiles
+cat > /opt/khalifeh/profiles/iran_default.conf << 'EOF'
+name=Iran Default
+mode=server
+bridge_port=7000
+sync_port=7001
+auto_sync=false
+ports=37899,38455,34538,51873,58318
+exclude_ports=22,53,80,443,2096,9876,11111
 EOF
-chmod +x /usr/local/bin/khalifeh-restart
+
+cat > /opt/khalifeh/profiles/eu_default.conf << 'EOF'
+name=EU Default
+mode=client
+iran_ip=CHANGE_ME
+bridge_port=7000
+sync_port=7001
+exclude_ports=22,53,80,443,2096,9876,11111
+EOF
 
 echo ""
-echo "✅ نصب کامل شد!"
+echo -e "${GREEN}=========================================${NC}"
+echo -e "${GREEN}Installation Complete!${NC}"
+echo -e "${GREEN}=========================================${NC}"
 echo ""
-echo "برای مدیریت تونل:"
-echo "   sudo khalifeh-manager"
+echo "Run: sudo khalifeh"
 echo ""
-echo "برای اجرای مستقیم:"
-echo "   sudo khalifeh"
-echo ""
-echo "برای ریستارت سریع:"
-echo "   sudo khalifeh-restart"

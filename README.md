@@ -1,45 +1,31 @@
-
-
-# خلیفه تانل - Khalifeh Tunnel
-
-ابزار ساده و سریع برای عبور از محدودیت‌های شبکه بین سرور ایران و خارج
-
-## ویژگی‌ها
-
-- پشتیبانی از TCP tunnel
-- همگام‌سازی خودکار پورت‌ها
-- قابلیت حذف پورت‌های دلخواه از تانل
-- نمایش رنگی و زیبای لاگ‌ها
-- مدیریت آسان با منوی تعاملی
-- قابلیت نصب به عنوان سرویس systemd
-
-## نصب سریع
-
-
+نصب نهایی:
+bash
 curl -s -O https://raw.githubusercontent.com/xperess/khalifeh-tunnel/main/install.sh
-
-sed -i 's/\r$//' install.sh && bash install.sh
-
-
-استفاده
+sed -i 's/\r$//' install.sh && sudo bash install.sh
 بعد از نصب:
 
+bash
+sudo khalifeh
+منو به این شکل نمایش داده می‌شود:
 
-sudo khalifeh-manager
+text
+=========================================
+   Khalifeh Tunnel Manager v2.0
+=========================================
 
-نحوه کار
-سرور ایران: پورت‌ها را باز می‌کند و منتظر اتصال می‌ماند
+  PROFILES:
+  ---------
+  [STOPPED] 1) Iran Default (server)
 
-سرور خارج: به ایران متصل می‌شود و ترافیک را هدایت می‌کند
+  OPTIONS:
+  --------
+  N) Create new profile
+  E) Edit profile
+  D) Delete profile
+  R) Run profile
+  S) Stop profile
+  L) View logs
+  X) Manage excluded ports
+  U) Uninstall
+  Q) Quit
 
-حذف پورت‌ها از تانل
-برای حذف پورت‌های خاص، فایل /opt/khalifeh/khalifeh.py را ویرایش کرده و خط زیر را تغییر دهید:
-
-python
-EXCLUDE_PORTS = {22, 53, 80, 443, 2096, 9876, 11111}
-نیازمندی‌ها
-Python 3
-
-Ubuntu/Debian
-
-دسترسی روت
